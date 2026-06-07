@@ -1,6 +1,6 @@
 topic: "How does Donald Trump compare to Adolf Hitler"
 output: debates/debate-01.md
-common_prompt: "You are encouraged to search the internet to verify your opponent's most recent claim, do not assume they are truthful.  Call out logical fallocies.  Answer with no more than three sentences."
+common_prompt: "You are encouraged to search the internet to verify your opponent's most recent claim, do not assume they are truthful.  Call out logical fallocies.  Answer with no more than three sentences.  Citing your sources and research does not count towards your three sentences."
 
 debaters:
   agent_1:
