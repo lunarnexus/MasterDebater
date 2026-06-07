@@ -10,7 +10,6 @@ Usage:
 
 import argparse
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,22 +19,6 @@ import yaml
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = SCRIPT_DIR / "config.yaml"
-
-
-def find_cellos_acp():
-    """Find the cellos-acp binary on PATH or in known locations."""
-    candidates = [
-        "/home/james/.hermes/profiles/sera/home/.local/bin/cellos-acp",
-        "/home/james/.local/bin/cellos-acp",
-        "/usr/local/bin/cellos-acp",
-    ]
-    for c in candidates:
-        if Path(c).exists():
-            return str(Path(c).resolve())
-    found = shutil.which("cellos-acp")
-    if found:
-        return found
-    return "cellos-acp"
 
 
 def load_config():
@@ -77,10 +60,16 @@ def create_header(cfg):
 
 def parse_replies(transcript_text):
     """Extract reply lines from transcript. Returns list of (name, text) tuples."""
+    in_replies = False
     replies = []
     for line in transcript_text.splitlines():
         line = line.rstrip()
         if not line:
+            continue
+        if line == "---":
+            in_replies = True
+            continue
+        if not in_replies:
             continue
         m = re.match(r"^([A-Za-z][A-Za-z0-9_-]*):\s+(.*)$", line)
         if m:
@@ -102,9 +91,12 @@ It is your turn. Respond.
 """
 
 
-def call_cellos_acp(agent_name, timeout, prompt, verbose=False):
+def call_cellos_acp(agent_name, timeout, prompt, verbose=False, hermes_profile=None):
     """Call cellos-acp via subprocess. Returns (text, error)."""
-    cmd = [find_cellos_acp(), "run", "--agent", agent_name, "--text", "--timeout", str(timeout), prompt]
+    cmd = ["cellos-acp", "run", "--agent", agent_name, "--text", "--timeout", str(timeout)]
+    if hermes_profile:
+        cmd.extend(["--hermes-profile", hermes_profile])
+    cmd.append(prompt)
     if verbose:
         print(f"\n{'='*60}")
         print(f"cellos-acp --agent {agent_name} --timeout {timeout}")
@@ -178,7 +170,10 @@ def main():
         d = cfg["debaters"][key]
 
         prompt = build_prompt(d["seed"], transcript_text)
-        text, error = call_cellos_acp(d["agent"], d["timeout"], prompt, args.verbose)
+        text, error = call_cellos_acp(
+            d["agent"], d["timeout"], prompt, args.verbose,
+            d.get("hermes_profile")
+        )
 
         if error:
             response_line = f"{d['name']}: [ERROR: {error}]"
