@@ -2,10 +2,10 @@
 """MasterDebater — two-LLM debate via cellos-acp.
 
 Usage:
-    python3 master.debater.py                          # 1 turn (default)
-    python3 master.debater.py --single-turn            # 1 turn
-    python3 master.debater.py --total-turns 5          # 5 turns at once
-    python3 master.debater.py --single-turn --verbose  # 1 turn, show details
+    python3 master.debater.py                          # append 1 turn (default)
+    python3 master.debater.py --turns 3                # append 3 turns
+    python3 master.debater.py --mod "Stay on topic."   # add moderator comment
+    python3 master.debater.py --turns 1 --verbose      # 1 turn, show details
 """
 
 import argparse
@@ -37,6 +37,10 @@ def load_config():
         print("ERROR: config needs at least 2 debaters.")
         sys.exit(1)
 
+    if "common_prompt" in cfg and not isinstance(cfg["common_prompt"], str):
+        print("ERROR: config.common_prompt must be a string.")
+        sys.exit(1)
+
     for key, d in debaters.items():
         for field in ("name", "agent", "seed", "timeout"):
             if field not in d:
@@ -58,10 +62,11 @@ def create_header(cfg):
     return "\n".join(lines)
 
 
-def parse_replies(transcript_text):
-    """Extract reply lines from transcript. Returns list of (name, text) tuples."""
+def parse_conversation_state(transcript_text, participating_speakers):
+    """Return the last participating speaker and count of participating replies."""
     in_replies = False
-    replies = []
+    spoke_last = participating_speakers[-1]
+    response_count = 0
     for line in transcript_text.splitlines():
         line = line.rstrip()
         if not line:
@@ -73,22 +78,34 @@ def parse_replies(transcript_text):
             continue
         m = re.match(r"^([A-Za-z][A-Za-z0-9_-]*):\s+(.*)$", line)
         if m:
-            replies.append((m.group(1), m.group(2)))
-    return replies
+            speaker = m.group(1)
+            if speaker in participating_speakers:
+                spoke_last = speaker
+                response_count += 1
+    return spoke_last, response_count
 
 
-def build_prompt(seed, transcript_text):
+def build_prompt(seed, transcript_text, common_prompt=""):
     """Build the prompt for a single debater turn."""
+    common_prompt_block = f"Common instructions: {common_prompt}\n\n" if common_prompt else ""
     return f"""\
 You are a participant in a debate.
 
-Your role: {seed}
+{common_prompt_block}Your role: {seed}
 
 Current debate transcript:
 {transcript_text}
 
 It is your turn. Respond.
 """
+
+
+def format_response_preview(response_line, limit=140):
+    """Return a compact single-line preview for console output."""
+    preview = " ".join(response_line.split())
+    if len(preview) <= limit:
+        return preview
+    return preview[: limit - 3] + "..."
 
 
 def call_cellos_acp(agent_name, timeout, prompt, verbose=False, hermes_profile=None):
@@ -124,22 +141,31 @@ def call_cellos_acp(agent_name, timeout, prompt, verbose=False, hermes_profile=N
         return "", str(e)
 
 
+def append_transcript_line(output_path, transcript_text, line):
+    """Append a single conversation line and persist immediately."""
+    transcript_text += line + "\n\n"
+    output_path.write_text(transcript_text)
+    return transcript_text
+
+
 def main():
     parser = argparse.ArgumentParser(description="MasterDebater — two-LLM debate")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--single-turn", action="store_true", help="Run exactly one turn (default)")
-    group.add_argument("--total-turns", type=int, default=None, metavar="N",
-                       help="Run N turns (both agents each respond N times)")
+    group.add_argument("--turns", type=int, default=None, metavar="N",
+                       help="Append N turns (both agents each respond N times)")
+    group.add_argument("--mod", type=str, default=None, metavar="TEXT",
+                       help="Append a moderator comment to the transcript")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show cellos-acp call details")
     args = parser.parse_args()
 
-    if args.total_turns is not None:
-        num_turns = args.total_turns
-    else:
-        num_turns = 1
+    num_turns = args.turns if args.turns is not None else 1
+    if num_turns < 1:
+        print("ERROR: --turns must be at least 1.")
+        sys.exit(1)
 
     cfg = load_config()
     output_path = SCRIPT_DIR / cfg["output"]
+    common_prompt = cfg.get("common_prompt", "")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -149,27 +175,29 @@ def main():
     else:
         transcript_text = create_header(cfg)
 
-    replies = parse_replies(transcript_text)
-    reply_count = len(replies)
+    if args.mod is not None:
+        transcript_text = append_transcript_line(output_path, transcript_text, f"Moderator: {args.mod}")
+        print(f"Moderator comment appended: {output_path}")
+        sys.exit(0)
 
     debater_keys = list(cfg["debaters"].keys())
+    participant_names = [cfg["debaters"][key]["name"] for key in debater_keys]
     num_debaters = len(debater_keys)
 
-    total_responses_needed = num_turns * num_debaters
-    remaining_replies = total_responses_needed - reply_count
-    if remaining_replies <= 0:
-        print(f"Already have {reply_count} replies ({reply_count // num_debaters} turns). No more needed.")
-        sys.exit(0)
+    spoke_last, reply_count = parse_conversation_state(transcript_text, participant_names)
+    next_speaker_idx = (participant_names.index(spoke_last) + 1) % num_debaters
+
+    responses_to_generate = num_turns * num_debaters
 
     new_responses = []
     error_stopped = False
 
-    for i in range(remaining_replies):
-        speaker_idx = (reply_count + i) % num_debaters
+    for i in range(responses_to_generate):
+        speaker_idx = (next_speaker_idx + i) % num_debaters
         key = debater_keys[speaker_idx]
         d = cfg["debaters"][key]
 
-        prompt = build_prompt(d["seed"], transcript_text)
+        prompt = build_prompt(d["seed"], transcript_text, common_prompt)
         text, error = call_cellos_acp(
             d["agent"], d["timeout"], prompt, args.verbose,
             d.get("hermes_profile")
@@ -177,25 +205,22 @@ def main():
 
         if error:
             response_line = f"{d['name']}: [ERROR: {error}]"
-            if args.total_turns is not None:
-                new_responses.append(response_line)
-                transcript_text += response_line + "\n\n"
-                error_stopped = True
+            new_responses.append(response_line)
+            transcript_text = append_transcript_line(output_path, transcript_text, response_line)
+            error_stopped = True
+            if num_turns > 1:
                 break
-            else:
-                new_responses.append(response_line)
-                transcript_text += response_line + "\n\n"
         else:
             response_line = f"{d['name']}: {text}"
             new_responses.append(response_line)
-            transcript_text += response_line + "\n\n"
+            transcript_text = append_transcript_line(output_path, transcript_text, response_line)
 
         if args.verbose:
-            print(f"\n>>> {d['name']} replied ({len(text)} chars)\n")
+            print(f"\n{response_line}\n")
+        else:
+            print(f"{format_response_preview(response_line)}\n")
 
-    output_path.write_text(transcript_text)
-
-    total_replies = len(replies) + len(new_responses)
+    total_replies = reply_count + len(new_responses)
     turns_done = total_replies // num_debaters
     print(f"Turns complete: {turns_done}")
     print(f"Responses: {total_replies} ({num_debaters} debaters x {turns_done} turns)")

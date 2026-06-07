@@ -43,7 +43,13 @@ Each turn, both agents respond in alternation. The transcript grows as a plain `
 6. Edit `config.yaml` with your topic and debaters, then run:
 
    ```bash
-   python3 master.debater.py --single-turn --verbose
+   python3 master.debater.py --verbose
+   ```
+
+7. Optionally inject a moderator comment:
+
+   ```bash
+   python3 master.debater.py --mod "Stay focused on historical comparisons."
    ```
 
 ## Architecture
@@ -59,6 +65,10 @@ debates/                 ← generated .md transcripts
 ```
 
 The script calls `cellos-acp run --agent <name> --text --timeout <N> "<prompt>"` for each response. The full transcript is passed as context on every turn so each debater sees the complete conversation history.
+
+Transcript updates are written to disk immediately after each response, so long `--total-turns` runs can be monitored live and resumed from partial progress.
+
+By default, each reply is printed in a compact one-line form as it arrives. With `--verbose`, the script prints the full appended transcript line for each response.
 
 ## Dependencies
 
@@ -106,6 +116,7 @@ The script calls `cellos-acp run --agent <name> --text --timeout <N> "<prompt>"`
 ```yaml
 topic: "AI will do more good than harm"
 output: debates/debate-01.md
+common_prompt: "Search the internet if needed, challenge unsupported claims, and keep your answer brief."
 
 debaters:
   agent_1:
@@ -128,6 +139,7 @@ debaters:
 |---|---|---|
 | `topic` | Yes | The debate topic (appears in transcript header) |
 | `output` | Yes | Path to the `.md` transcript file (relative to script dir) |
+| `common_prompt` | No | Shared instructions applied to every debater prompt |
 | `debaters` | Yes | Dict of debater definitions (min 2) |
 | `debaters.<key>.name` | Yes | Display name (used in transcript) |
 | `debaters.<key>.agent` | Yes | Registered cellos-acp agent name |
@@ -138,25 +150,28 @@ debaters:
 ## Usage
 
 ```bash
-# Run one turn (both agents respond once)
+# Append one turn (both agents respond once)
 python3 master.debater.py
 
-# Run one turn with verbose output
-python3 master.debater.py --single-turn --verbose
+# Append one turn with verbose output
+python3 master.debater.py --turns 1 --verbose
 
-# Run 5 turns at once (10 responses)
-python3 master.debater.py --total-turns 5
+# Append 5 turns at once (10 responses)
+python3 master.debater.py --turns 5
+
+# Inject a moderator comment without advancing the turn order
+python3 master.debater.py --mod "Please address the strongest point from your opponent."
 ```
 
 **Arguments:**
 
 | Flag | Description |
 |---|---|
-| `--single-turn` | Run exactly 1 turn (default) |
-| `--total-turns N` | Run N turns at once (both agents respond N times) |
-| `--verbose`, `-v` | Show each cellos-acp call and response before writing |
+| `--turns N` | Append N turns; defaults to 1 if omitted |
+| `--mod TEXT` | Append a moderator comment without consuming a debater turn |
+| `--verbose`, `-v` | Print each full transcript line as it is appended |
 
-One turn = both agents respond once (2 responses total).
+One turn = both agents respond once (2 responses total). Running the script again appends more turns to the existing transcript.
 
 ## Transcript Format
 
@@ -180,8 +195,10 @@ Aegis: [response...]
 
 Each invocation appends to the file. The script tracks state from the transcript itself — no separate state file needed.
 
+Moderator comments are part of the visible conversation, but they do not affect which debater speaks next.
+
 ## Error Handling
 
 - If a cellos-acp call fails (timeout, crash, etc.), the error is appended to the transcript as `[ERROR: ...]`
-- `--single-turn` mode: error is recorded, script continues with next debater
-- `--total-turns` mode: error is recorded, **run stops immediately**
+- Single-turn append (`--turns 1` or default): error is recorded, script continues with the next debater
+- Multi-turn append (`--turns N`, `N > 1`): error is recorded, **run stops immediately**
