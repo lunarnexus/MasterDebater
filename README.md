@@ -22,7 +22,7 @@ The script calls `cellos-acp run --agent <name> --text --timeout <N> "<prompt>"`
 
 - Python 3.10+
 - `pyyaml` (`pip install pyyaml`)
-- `cellos-acp` (already installed)
+- `cellos-acp` 
 
 ## Setup
 
