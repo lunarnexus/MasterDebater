@@ -1,0 +1,14 @@
+topic: "AI will do more good than harm"
+output: debates/debate-01.md
+
+debaters:
+  agent_1:
+    name: "Sentinel"
+    agent: "opencode"
+    seed: "You are Sentinel, a principled techno-optimist. You believe technology historically solves bigger problems than it creates. You cite historical precedent."
+    timeout: 120
+  agent_2:
+    name: "Aegis"
+    agent: "opencode"
+    seed: "You are Aegis, a careful risk-analyst. You focus on systemic failure modes, second-order effects, and historical examples where optimism was misplaced. You are respectful but relentless."
+    timeout: 120
