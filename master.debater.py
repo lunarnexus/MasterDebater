@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -108,15 +109,24 @@ def format_response_preview(response_line, limit=140):
     return preview[: limit - 3] + "..."
 
 
-def call_cellos_acp(agent_name, timeout, prompt, verbose=False, hermes_profile=None):
-    """Call cellos-acp via subprocess. Returns (text, error)."""
-    cmd = ["cellos-acp", "run", "--agent", agent_name, "--text", "--timeout", str(timeout)]
-    if hermes_profile:
-        cmd.extend(["--hermes-profile", hermes_profile])
-    cmd.append(prompt)
+def call_claude_cli(model, timeout, prompt, verbose=False):
+    """Call the Claude Code CLI directly in print mode. Returns (text, error).
+
+    Selected by setting a debater's `agent: claude-cli` in config.yaml. Uses
+    `claude -p "<prompt>" --model <model>`, which authenticates with the user's
+    logged-in Claude Code subscription (no API key) and prints the reply to
+    stdout. This bypasses ACP entirely — current Claude Code builds no longer
+    expose the `--experimental-acp` interface that cellos-acp's `claude` adapter
+    relies on. `--model` selects the model per debater (optional).
+    """
+    cmd = ["claude", "-p", prompt]
+    if model:
+        cmd.extend(["--model", model])
+
     if verbose:
         print(f"\n{'='*60}")
-        print(f"cellos-acp --agent {agent_name} --timeout {timeout}")
+        model_note = f" model={model}" if model else ""
+        print(f"claude -p --print{model_note} (timeout {timeout}s)")
         print(f"{'='*60}")
 
     try:
@@ -125,6 +135,50 @@ def call_cellos_acp(agent_name, timeout, prompt, verbose=False, hermes_profile=N
             capture_output=True,
             text=True,
             timeout=timeout + 30,
+        )
+        text = result.stdout.strip()
+        if result.returncode != 0:
+            error = result.stderr.strip() or f"exit code {result.returncode}"
+            return "", error
+        if not text:
+            return "", "(empty response)"
+        return text, None
+    except subprocess.TimeoutExpired:
+        return "", f"timed out after {timeout + 30}s"
+    except FileNotFoundError:
+        return "", "claude CLI not found (is Claude Code installed?)"
+    except Exception as e:
+        return "", str(e)
+
+
+def call_cellos_acp(agent_name, timeout, prompt, verbose=False, hermes_profile=None, model=None):
+    """Call cellos-acp via subprocess. Returns (text, error).
+
+    If `model` is set, it is passed to the agent via the ANTHROPIC_MODEL
+    environment variable. This allows a different model per debater.
+    """
+    cmd = ["cellos-acp", "run", "--agent", agent_name, "--text", "--timeout", str(timeout)]
+    if hermes_profile:
+        cmd.extend(["--hermes-profile", hermes_profile])
+    cmd.append(prompt)
+
+    env = os.environ.copy()
+    if model:
+        env["ANTHROPIC_MODEL"] = model
+
+    if verbose:
+        print(f"\n{'='*60}")
+        model_note = f" model={model}" if model else ""
+        print(f"cellos-acp --agent {agent_name} --timeout {timeout}{model_note}")
+        print(f"{'='*60}")
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 30,
+            env=env,
         )
         text = result.stdout.strip()
         if result.returncode != 0:
@@ -198,10 +252,16 @@ def main():
         d = cfg["debaters"][key]
 
         prompt = build_prompt(d["seed"], transcript_text, common_prompt)
-        text, error = call_cellos_acp(
-            d["agent"], d["timeout"], prompt, args.verbose,
-            d.get("hermes_profile")
-        )
+        if d["agent"] == "claude-cli":
+            # Drive the Claude Code CLI directly (subscription auth, no ACP).
+            text, error = call_claude_cli(
+                d.get("model"), d["timeout"], prompt, args.verbose
+            )
+        else:
+            text, error = call_cellos_acp(
+                d["agent"], d["timeout"], prompt, args.verbose,
+                d.get("hermes_profile"), d.get("model")
+            )
 
         if error:
             response_line = f"{d['name']}: [ERROR: {error}]"

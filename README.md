@@ -142,10 +142,50 @@ debaters:
 | `common_prompt` | No | Shared instructions applied to every debater prompt |
 | `debaters` | Yes | Dict of debater definitions (min 2) |
 | `debaters.<key>.name` | Yes | Display name (used in transcript) |
-| `debaters.<key>.agent` | Yes | Registered cellos-acp agent name |
+| `debaters.<key>.agent` | Yes | Registered cellos-acp agent name, or `claude-cli` (see below) |
 | `debaters.<key>.hermes_profile` | No | Hermes profile name (only applies when `agent: hermes`) |
+| `debaters.<key>.model` | No | Model override for this debater. For `claude-cli`, passed as `--model`; for cellos-acp agents, exported as `ANTHROPIC_MODEL` |
 | `debaters.<key>.seed` | Yes | Persona/role prompt for this debater |
 | `debaters.<key>.timeout` | Yes | cellos-acp timeout in seconds |
+
+### The `claude-cli` agent (no API key)
+
+Setting `agent: claude-cli` drives the local Claude Code CLI directly via
+`claude -p "<prompt>" --model <model>` instead of going through cellos-acp/ACP.
+It authenticates with your logged-in Claude Code subscription — **no API key
+required** — and `model` selects the Claude model per debater (e.g.
+`claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`).
+
+This exists because current Claude Code builds no longer expose the
+`--experimental-acp` interface that cellos-acp's `claude` adapter depends on, so
+`agent: claude` fails the ACP handshake on those versions. `claude-cli` is fully
+opt-in and does not change the behavior of any cellos-acp agent.
+
+Example — two Claude debaters on different models, no API key:
+
+```yaml
+topic: "The US should continue to ally with Israel"
+output: debates/debate-01.md
+common_prompt: "Challenge unsupported claims and keep your answer to three sentences."
+
+debaters:
+  agent_1:
+    name: "Democrat"
+    agent: "claude-cli"
+    model: "claude-opus-4-8"
+    seed: "You are a center-left Democrat..."
+    timeout: 300
+  agent_2:
+    name: "Republican"
+    agent: "claude-cli"
+    model: "claude-sonnet-4-6"
+    seed: "You are a MAGA Republican..."
+    timeout: 300
+```
+
+Prerequisite: the `claude` CLI must be installed and logged in (`claude` runs an
+interactive session; auth is reused by `claude-cli`). `cellos-acp` is **not**
+required when every debater uses `claude-cli`.
 
 ## Usage
 
