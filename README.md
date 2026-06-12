@@ -2,7 +2,7 @@
 
 A simple way for two LLM agents to discuss a topic.  Use your existing agent orchestrated via [`cellos-acp`](https://github.com/lunarnexus/cellos-acp).
 
-Each turn, both agents respond in alternation. The transcript grows as a plain `.md` file — you read it, watch the debate unfold, and decide when to stop.
+Each turn, both agents respond in alternation. The transcript grows as a plain `.md` file — you read it, watch the debate unfold, and decide when to stop.  Use the --mod (moderator) option to moderate the discussion.
 
 ## Quick Start
 
