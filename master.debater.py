@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MasterDebater — two-LLM debate via cellos-acp.
+"""MasterDebater — two-LLM debate via acpx one-shot exec.
 
 Usage:
     python3 master.debater.py                          # append 1 turn (default)
@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -108,15 +109,24 @@ def format_response_preview(response_line, limit=140):
     return preview[: limit - 3] + "..."
 
 
-def call_cellos_acp(agent_name, timeout, prompt, verbose=False, hermes_profile=None):
-    """Call cellos-acp via subprocess. Returns (text, error)."""
-    cmd = ["cellos-acp", "run", "--agent", agent_name, "--text", "--timeout", str(timeout)]
-    if hermes_profile:
-        cmd.extend(["--hermes-profile", hermes_profile])
-    cmd.append(prompt)
+def call_acpx(agent_cmd, timeout, prompt, verbose=False):
+    """Call acpx via subprocess one-shot exec. Returns (text, error).
+
+    Args:
+        agent_cmd: Full acpx agent command string (e.g. "hermes acp -p mina"
+                   or "opencode acp"). Passed as acpx --agent argument.
+        timeout: Timeout in seconds for the agent to respond.
+        prompt: The prompt text to send to the agent.
+        verbose: If True, print the command before running.
+    """
+    acpx_bin = shutil.which("acpx")
+    if not acpx_bin:
+        return "", "acpx not found on PATH (install it and ensure the acpx executable is available in PATH)"
+
+    cmd = [acpx_bin, "--agent", agent_cmd, "exec", prompt]
     if verbose:
         print(f"\n{'='*60}")
-        print(f"cellos-acp --agent {agent_name} --timeout {timeout}")
+        print(f"{acpx_bin} --agent {agent_cmd}")
         print(f"{'='*60}")
 
     try:
@@ -136,7 +146,7 @@ def call_cellos_acp(agent_name, timeout, prompt, verbose=False, hermes_profile=N
     except subprocess.TimeoutExpired:
         return "", f"timed out after {timeout + 30}s"
     except FileNotFoundError:
-        return "", "cellos-acp not found (is it installed?)"
+        return "", "acpx not found (install with: npm install -g acpx@latest)"
     except Exception as e:
         return "", str(e)
 
@@ -155,7 +165,7 @@ def main():
                        help="Append N turns (both agents each respond N times)")
     group.add_argument("--mod", type=str, default=None, metavar="TEXT",
                        help="Append a moderator comment to the transcript")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Show cellos-acp call details")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show acpx call details")
     args = parser.parse_args()
 
     num_turns = args.turns if args.turns is not None else 1
@@ -198,10 +208,7 @@ def main():
         d = cfg["debaters"][key]
 
         prompt = build_prompt(d["seed"], transcript_text, common_prompt)
-        text, error = call_cellos_acp(
-            d["agent"], d["timeout"], prompt, args.verbose,
-            d.get("hermes_profile")
-        )
+        text, error = call_acpx(d["agent"], d["timeout"], prompt, args.verbose)
 
         if error:
             response_line = f"{d['name']}: [ERROR: {error}]"
