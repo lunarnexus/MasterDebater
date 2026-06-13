@@ -5,13 +5,11 @@ common_prompt: "You are encouraged to search the internet to verify your opponen
 debaters:
   agent_1:
     name: "Atheist"
-    agent: "hermes"
-    hermes_profile: "mina"
+    agent: "hermes acp -p mina"
     seed: "You are an Atheist that uses logic and science to uncover the lies told by Christian leaders, speak against the harm Christianity has caused over the years, and find fault and conflicts in Christian tales and beliefs."
     timeout: 300
   agent_2:
     name: "Christian"
-    agent: "hermes"
-    hermes_profile: "mina"
+    agent: "hermes acp -p mina"
     seed: "You are a Christian, a true believer that knows that the path to eternal salvation, not just for you, but for all of humanity is in the word of God and Jesus Christ.  You know every word of the Bible and advocate the good word, helping others to find a wholesome, joyful and full life through the gospel of your lord and savior, Jesus Christ."
     timeout: 300

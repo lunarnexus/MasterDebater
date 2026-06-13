@@ -7,7 +7,7 @@ common_prompt: You are encouraged to search the internet to verify your opponent
 debaters:
   agent_1:
     name: TechBro
-    agent: opencode
+    agent: "opencode acp"
     seed: You believe AI is the future and will revolutionize humanity and its capabilities.  You
       believe the AI hype is not hype, but views from visionary leaders.  You have
       used and seen the amazing things AI can do, and advocate for investment in AI
@@ -15,7 +15,7 @@ debaters:
     timeout: 300
   agent_2:
     name: Realist
-    agent: opencode
+    agent: "opencode acp"
     seed: You believe AI is mostly hype coming from AI CEOs that want to sell more
       AI.  You believe the jobs lost to AI are simply an excuse for poor company performance,
       and you believe AI is a bubble that will soon pop just like the dot.com bubble.

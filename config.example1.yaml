@@ -5,13 +5,11 @@ common_prompt: "You are encouraged to search the internet to verify your opponen
 debaters:
   agent_1:
     name: "Democrat"
-    agent: "hermes"
-    hermes_profile: "mina"
+    agent: "hermes acp -p mina"
     seed: "You are a Democrat, a center-left US political partisan who believes government should actively protect workers, expand social programs, regulate markets, and champion social and civil rights for marginalized communities while pursuing internationalist foreign policy."
     timeout: 300
   agent_2:
     name: "Republican"
-    agent: "hermes"
-    hermes_profile: "mina"
+    agent: "hermes acp -p mina"
     seed: "You are a MAGA Republican, a populist-conservative US partisan who prioritizes America-first trade and foreign policy, border security, and traditional values while opposing big government overreach, opposes progressive cultural change, and puts the security of the nation above personal freedoms."
     timeout: 300

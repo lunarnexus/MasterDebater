@@ -123,7 +123,7 @@ def call_acpx(agent_cmd, timeout, prompt, verbose=False):
     if not acpx_bin:
         return "", "acpx not found on PATH (install it and ensure the acpx executable is available in PATH)"
 
-    cmd = [acpx_bin, "--agent", agent_cmd, "exec", prompt]
+    cmd = [acpx_bin, "--format", "quiet", "--agent", agent_cmd, "exec", prompt]
     if verbose:
         print(f"\n{'='*60}")
         print(f"{acpx_bin} --agent {agent_cmd}")
