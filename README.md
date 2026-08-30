@@ -1,10 +1,10 @@
 # MasterDebater
 
-A simple way for two LLM agents to discuss a topic.  Use your existing agent orchestrated via [`cellos-acp`](https://github.com/lunarnexus/cellos-acp).
+A simple way for two LLM agents to discuss a topic.
 
-Each turn, both agents respond in alternation. The transcript grows as a plain `.md` file — you read it, watch the debate unfold, and decide when to stop.  Use the --mod (moderator) option to moderate the discussion.
+Each turn, both agents respond in alternation. The transcript grows as a plain `.md` file — you read it, watch the debate unfold, and decide when to stop. Use `--mod` to add moderator comments.
 
-** Note:  cellos-acp only supports Hermes and Opencode at the moment, so I may create a acpx branch which should support something like 15 different agents.  
+MasterDebater uses registry-backed connector plugins for Hermes, Pi, and OpenCode.
 
 ## Quick Start
 
@@ -21,34 +21,26 @@ Each turn, both agents respond in alternation. The transcript grows as a plain `
    pip install pyyaml
    ```
 
-3. Install `cellos-acp` with `pipx`:
+3. No extra agent bridge is required. Install the connector CLIs you plan to use:
 
-   ```bash
-   pipx install git+https://github.com/lunarnexus/cellos-acp.git
-   ```
+   - Hermes
+   - Pi
+   - OpenCode
 
-4. Verify `cellos-acp` is available:
-
-   ```bash
-   cellos-acp list
-   ```
-
-5. (Optional) Create or clone Hermes profiles for your debaters:
+4. (Optional) Create or clone Hermes profiles for your debaters:
 
    ```bash
    hermes profile create debater1 --clone
    hermes profile create debater2 --clone
    ```
 
-   Then point `config.yaml` at those profile names with `hermes_profile`.
-
-6. Edit `config.yaml` with your topic and debaters, then run:
+5. Edit `config.yaml` with your topic and debaters, then run:
 
    ```bash
    python3 master.debater.py --verbose
    ```
 
-7. Optionally inject a moderator comment:
+6. Optionally inject a moderator comment:
 
    ```bash
    python3 master.debater.py --mod "Stay focused on historical comparisons."
@@ -59,24 +51,32 @@ Each turn, both agents respond in alternation. The transcript grows as a plain `
 ```
 config.yaml              ← topic, debaters, output path
 master.debater.py        ← orchestrator
-  ├─ Reads config
-  ├─ Reads/writes transcript
-  ├─ Alternates debaters
-  └─ Calls cellos-acp via subprocess
+connectors/              ← connector-backed agents
 debates/                 ← generated .md transcripts
 ```
 
-The script calls `cellos-acp run --agent <name> --text --timeout <N> "<prompt>"` for each response. The full transcript is passed as context on every turn so each debater sees the complete conversation history.
+The orchestrator loads each debater’s connector, builds the prompt, and calls the connector CLI directly. The full transcript is passed as context on every turn so each debater sees the complete conversation history.
 
-Transcript updates are written to disk immediately after each response, so long `--total-turns` runs can be monitored live and resumed from partial progress.
+Transcript updates are written to disk immediately after each response, so long `--turns` runs can be monitored live and resumed from partial progress.
 
 By default, each reply is printed in a compact one-line form as it arrives. With `--verbose`, the script prints the full appended transcript line for each response.
+
+## Plugins
+
+Connectors are registry-backed plugins keyed by connector name. Each plugin defines its CLI name and required config fields, then returns the argv used to launch the agent.
+
+Examples:
+- Hermes: `connector: "hermes"`, `profile: "mina"`
+- Pi: `connector: "pi"`, `model: "lmstudio/qwen/qwen3.8-27b"`
+- OpenCode: `connector: "opencode"`, `model: "lmstudio/qwen/qwen3.8-27b"`
+
+If present, `PLUGIN_CREATION.md` is the authoring guide.
 
 ## Dependencies
 
 - Python 3.10+
 - `pyyaml` (`pip install pyyaml`)
-- `cellos-acp` (`pipx install git+https://github.com/lunarnexus/cellos-acp.git`)
+- Hermes / Pi / OpenCode CLIs on your PATH
 
 ## Setup
 
@@ -86,30 +86,14 @@ By default, each reply is printed in a compact one-line form as it arrives. With
    pip install pyyaml
    ```
 
-2. Install `cellos-acp`:
-
-   ```bash
-   pipx install git+https://github.com/lunarnexus/cellos-acp.git
-   ```
-
-3. Verify `cellos-acp` works:
-
-   ```bash
-   cellos-acp list
-   ```
-
-    Make sure your two agents are registered (opencode, hermes, etc.).
-
-4. If you are using Hermes, create profiles for your debaters:
+2. If you are using Hermes, create profiles for your debaters:
 
    ```bash
    hermes profile create debater1 --clone
    hermes profile create debater2 --clone
    ```
 
-   Update each profile's model/provider settings as needed, then reference them in `config.yaml` via `hermes_profile`.
-
-5. Edit `config.yaml` with your topic, debater definitions, and target `.md` filename.
+3. Edit `config.yaml` with your topic, debater definitions, and target `.md` filename.
 
 ## Config
 
@@ -123,14 +107,14 @@ common_prompt: "Search the internet if needed, challenge unsupported claims, and
 debaters:
   agent_1:
     name: "Sentinel"
-    agent: "hermes"
-    hermes_profile: "mina"
+    connector: "hermes"
+    profile: "mina"
     seed: "You are Sentinel, a techno-optimist..."
     timeout: 120
   agent_2:
     name: "Aegis"
-    agent: "hermes"
-    hermes_profile: "mina"
+    connector: "pi"
+    model: "lmstudio/qwen/qwen3.8-27b"
     seed: "You are Aegis, a risk-analyst..."
     timeout: 120
 ```
@@ -139,15 +123,16 @@ debaters:
 
 | Field | Required | Description |
 |---|---|---|
-| `topic` | Yes | The debate topic (appears in transcript header) |
-| `output` | Yes | Path to the `.md` transcript file (relative to script dir) |
-| `common_prompt` | No | Shared instructions applied to every debater prompt |
-| `debaters` | Yes | Dict of debater definitions (min 2) |
-| `debaters.<key>.name` | Yes | Display name (used in transcript) |
-| `debaters.<key>.agent` | Yes | Registered cellos-acp agent name |
-| `debaters.<key>.hermes_profile` | No | Hermes profile name (only applies when `agent: hermes`) |
-| `debaters.<key>.seed` | Yes | Persona/role prompt for this debater |
-| `debaters.<key>.timeout` | Yes | cellos-acp timeout in seconds |
+| `topic` | Yes | Debate topic shown in the transcript header |
+| `output` | Yes | Transcript `.md` path (relative to the script) |
+| `common_prompt` | No | Shared instructions added to every prompt |
+| `debaters` | Yes | Debater definitions (min 2) |
+| `debaters.<key>.name` | Yes | Display name used in the transcript |
+| `debaters.<key>.connector` | Yes | Connector plugin: `hermes`, `pi`, or `opencode` |
+| `debaters.<key>.seed` | Yes | Persona / role prompt for this debater |
+| `debaters.<key>.timeout` | Yes | Connector timeout in seconds |
+| `debaters.<key>.profile` | Hermes only | Hermes profile name |
+| `debaters.<key>.model` | Pi / OpenCode only | Model name passed to the connector |
 
 ## Usage
 
@@ -182,11 +167,9 @@ The transcript is a plain `.md` file — human readable, git-trackable, Obsidian
 ```markdown
 # AI will do more good than harm
 
-**Agent 1:** Sentinel (hermes / mina)
-Seed: You are Sentinel, a techno-optimist...
+**Agent 1:** Sentinel (hermes)
 
-**Agent 2:** Aegis (hermes / mina)
-Seed: You are Aegis, a risk-analyst...
+**Agent 2:** Aegis (pi)
 
 ---
 
@@ -197,10 +180,11 @@ Aegis: [response...]
 
 Each invocation appends to the file. The script tracks state from the transcript itself — no separate state file needed.
 
-Moderator comments are part of the visible conversation, but they do not affect which debater speaks next.
+Moderator comments are appended and exit immediately; they do not advance the debater reply count or turn order.
 
 ## Error Handling
 
-- If a cellos-acp call fails (timeout, crash, etc.), the error is appended to the transcript as `[ERROR: ...]`
+- If a connector call fails (timeout, crash, etc.), the error is appended to the transcript as `[ERROR: ...]`
 - Single-turn append (`--turns 1` or default): error is recorded, script continues with the next debater
 - Multi-turn append (`--turns N`, `N > 1`): error is recorded, **run stops immediately**
+- For `--turns N` with `N > 1`, the run stops early on the first error

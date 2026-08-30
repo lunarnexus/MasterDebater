@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MasterDebater — two-LLM debate via cellos-acp.
+"""MasterDebater — two-LLM debate via connector plugins.
 
 Usage:
     python3 master.debater.py                          # append 1 turn (default)
@@ -10,11 +10,12 @@ Usage:
 
 import argparse
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 import yaml
+
+from connectors import ConnectorError, REGISTRY, call_connector, require_fields
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -41,11 +42,28 @@ def load_config():
         print("ERROR: config.common_prompt must be a string.")
         sys.exit(1)
 
+    if not isinstance(cfg["output"], str):
+        print("ERROR: config.output must be a string.")
+        sys.exit(1)
+
     for key, d in debaters.items():
-        for field in ("name", "agent", "seed", "timeout"):
+        for field in ("name", "connector", "seed", "timeout"):
             if field not in d:
                 print(f"ERROR: debater '{key}' missing field '{field}'")
                 sys.exit(1)
+        if not isinstance(d["timeout"], (int, float)) or d["timeout"] <= 0:
+            print(f"ERROR: debater '{key}' timeout must be a positive number.")
+            sys.exit(1)
+        connector_name = d["connector"]
+        connector = REGISTRY.get(connector_name)
+        if connector is None:
+            print(f"ERROR: debater '{key}' has unknown connector '{connector_name}'")
+            sys.exit(1)
+        try:
+            require_fields(d, connector.REQUIRED_FIELDS)
+        except ConnectorError as e:
+            print(f"ERROR: debater '{key}' {e}")
+            sys.exit(1)
 
     return cfg
 
@@ -53,9 +71,8 @@ def load_config():
 def create_header(cfg):
     """Build the transcript header (topic + agent definitions)."""
     lines = [f"# {cfg['topic']}", ""]
-    for i, (key, d) in enumerate(cfg["debaters"].items(), 1):
-        lines.append(f"**Agent {i}:** {d['name']} ({d['agent']})")
-        lines.append(f"Seed: {d['seed']}")
+    for i, (_, d) in enumerate(cfg["debaters"].items(), 1):
+        lines.append(f"**Agent {i}:** {d['name']} ({d['connector']})")
         lines.append("")
     lines.append("---")
     lines.append("")
@@ -67,6 +84,7 @@ def parse_conversation_state(transcript_text, participating_speakers):
     in_replies = False
     spoke_last = participating_speakers[-1]
     response_count = 0
+    speakers = sorted(participating_speakers, key=len, reverse=True)
     for line in transcript_text.splitlines():
         line = line.rstrip()
         if not line:
@@ -76,12 +94,12 @@ def parse_conversation_state(transcript_text, participating_speakers):
             continue
         if not in_replies:
             continue
-        m = re.match(r"^([A-Za-z][A-Za-z0-9_-]*):\s+(.*)$", line)
-        if m:
-            speaker = m.group(1)
-            if speaker in participating_speakers:
+        for speaker in speakers:
+            prefix = f"{speaker}: "
+            if line.startswith(prefix):
                 spoke_last = speaker
                 response_count += 1
+                break
     return spoke_last, response_count
 
 
@@ -108,37 +126,17 @@ def format_response_preview(response_line, limit=140):
     return preview[: limit - 3] + "..."
 
 
-def call_cellos_acp(agent_name, timeout, prompt, verbose=False, hermes_profile=None):
-    """Call cellos-acp via subprocess. Returns (text, error)."""
-    cmd = ["cellos-acp", "run", "--agent", agent_name, "--text", "--timeout", str(timeout)]
-    if hermes_profile:
-        cmd.extend(["--hermes-profile", hermes_profile])
-    cmd.append(prompt)
-    if verbose:
-        print(f"\n{'='*60}")
-        print(f"cellos-acp --agent {agent_name} --timeout {timeout}")
-        print(f"{'='*60}")
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout + 30,
-        )
-        text = result.stdout.strip()
-        if result.returncode != 0:
-            error = result.stderr.strip() or f"exit code {result.returncode}"
-            return "", error
-        if not text:
-            return "", "(empty response)"
-        return text, None
-    except subprocess.TimeoutExpired:
-        return "", f"timed out after {timeout + 30}s"
-    except FileNotFoundError:
-        return "", "cellos-acp not found (is it installed?)"
-    except Exception as e:
-        return "", str(e)
+def validate_output_path(output_value):
+    output_path = (SCRIPT_DIR / output_value).resolve()
+    debates_root = (SCRIPT_DIR / "debates").resolve()
+    if output_path == debates_root or debates_root not in output_path.parents:
+        print("ERROR: output path must be a file under debates/")
+        sys.exit(1)
+    if output_path.suffix == "" or output_path.name == "":
+        print("ERROR: output path must be a file under debates/")
+        sys.exit(1)
+    return output_path
 
 
 def append_transcript_line(output_path, transcript_text, line):
@@ -155,7 +153,7 @@ def main():
                        help="Append N turns (both agents each respond N times)")
     group.add_argument("--mod", type=str, default=None, metavar="TEXT",
                        help="Append a moderator comment to the transcript")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Show cellos-acp call details")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show connector call details")
     args = parser.parse_args()
 
     num_turns = args.turns if args.turns is not None else 1
@@ -164,7 +162,7 @@ def main():
         sys.exit(1)
 
     cfg = load_config()
-    output_path = SCRIPT_DIR / cfg["output"]
+    output_path = validate_output_path(cfg["output"])
     common_prompt = cfg.get("common_prompt", "")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,9 +196,8 @@ def main():
         d = cfg["debaters"][key]
 
         prompt = build_prompt(d["seed"], transcript_text, common_prompt)
-        text, error = call_cellos_acp(
-            d["agent"], d["timeout"], prompt, args.verbose,
-            d.get("hermes_profile")
+        text, error = call_connector(
+            d["connector"], d, prompt, d["timeout"], args.verbose
         )
 
         if error:
